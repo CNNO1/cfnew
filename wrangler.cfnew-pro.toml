@@ -1,0 +1,15 @@
+name = "cfnew-pro"
+main = "worker.mjs"
+compatibility_date = "2026-01-20"
+workers_dev = true
+
+routes = [
+  { pattern = "newpro.duoduoliya.top/*", zone_name = "duoduoliya.top" }
+]
+
+[vars]
+u = "d145cd26-18cc-40a7-8beb-2688f6f74c06"
+
+[[kv_namespaces]]
+binding = "C"
+id = "5947961eb68449ab86024745ad869f77"
