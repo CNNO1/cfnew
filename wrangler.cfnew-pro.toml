@@ -4,7 +4,7 @@ compatibility_date = "2026-01-20"
 workers_dev = true
 
 routes = [
-  { pattern = "newpro.duoduoliya.top/*", zone_name = "duoduoliya.top" }
+  { pattern = "newpro.duoduoliya.top", custom_domain = true }
 ]
 
 [vars]

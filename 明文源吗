@@ -6058,7 +6058,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
                             <button type="button" id="proLoadHealth" style="background: rgba(255, 180, 0, 0.18); border: 1px solid #ffb400; padding: 8px 12px; color: #ffb400; font-family: 'Courier New', monospace; cursor: pointer;">刷新健康状态</button>
                             <button type="button" id="proLoadDashboard" style="background: rgba(163, 71, 255, 0.18); border: 1px solid #a347ff; padding: 8px 12px; color: #c99cff; font-family: 'Courier New', monospace; cursor: pointer;">Network OS</button>
                             <button type="button" id="proRunMaintenance" style="background: rgba(255, 43, 214, 0.16); border: 1px solid #ff2bd6; padding: 8px 12px; color: #ff9bed; font-family: 'Courier New', monospace; cursor: pointer;">自动维护</button>
-                            <a id="proHealthLink" href="${网址698.pathname.replace(/\/$/, '')}/status" target="_blank" style="border: 1px solid #7aa9c4; padding: 8px 12px; color: #7aa9c4; text-decoration: none;">状态页</a>
+                            <a id="proHealthLink" href="${网址239.pathname.replace(/\/$/, '')}/status" target="_blank" style="border: 1px solid #7aa9c4; padding: 8px 12px; color: #7aa9c4; text-decoration: none;">状态页</a>
                         </div>
                         <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;">
                             <select id="proHistorySelect" style="min-width: 260px; padding: 8px; background: rgba(0, 0, 0, 0.8); border: 1px solid #00f0ff; color: #00f0ff; font-family: 'Courier New', monospace;">
