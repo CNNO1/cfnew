@@ -42,6 +42,16 @@
 - 配置版本回滚：每次保存、轮换、回滚前自动保留最近20个配置版本
 - 健康状态页面：访问 `/{UUID或自定义路径}/status` 查看整体健康分、节点状态和轮换设置
 
+## cfnew Pro Phase 2：Network OS Foundation
+
+Phase 2 把 cfnew Pro 从“增强版代理面板”推进为代理服务的轻量 Network OS 入口。仍然保持 Worker + KV 架构，但 KV 不再只是配置仓库，也承担控制平面的状态存储。
+
+- 订阅请求统计：记录订阅请求总量、今日请求、小时/日期趋势、客户端类型、CF colo、国家/地区
+- 设备识别：按请求指纹生成匿名设备 ID，记录客户端、User-Agent、最近访问、请求次数
+- Network OS Dashboard：新增统一仪表盘 API，汇总节点健康、请求统计、设备列表和维护状态
+- 自动维护入口：一键执行来源同步、节点诊断、信誉更新和优选轮换
+- 多设备同步底座：先建立设备状态模型，后续可继续扩展成设备级配置同步
+
 当前 Pro 增强实现位于 `明文源吗`。如果需要发布混淆版，请基于该文件重新生成 `少年你相信光吗`。
 
 ## v2.9.8c 更新
@@ -201,15 +211,6 @@ curl -X POST "https://your-worker.workers.dev/{自定义路径}/api/preferred-ip
   -d '{"ip": "1.2.3.4", "port": 443, "name": "香港节点"}'
 ```
 
-#### cfnew Pro API
-
-这些接口需要已配置KV，并通过 `/{UUID或自定义路径}` 路径访问：
-
-- `GET /api/pro/status`：查看健康分、节点信誉、配置版本状态
-- `POST /api/pro/diagnose`：一键诊断当前 `yx` 节点并更新信誉分
-- `POST /api/pro/rotate`：立即按信誉分轮换并保存 `yx`
-- `GET /api/pro/history`：查看最近20个配置版本
-- `POST /api/pro/rollback`：传入 `{ "id": "版本ID" }` 回滚配置
 4. 批量添加IP：
 ```bash
 curl -X POST "https://your-worker.workers.dev/{UUID或自定义路径}/api/preferred-ips" \
@@ -225,6 +226,20 @@ curl -X DELETE "https://your-worker.workers.dev/{UUID或自定义路径}/api/pre
   -H "Content-Type: application/json" \
   -d '{"all": true}'
 ```
+
+#### cfnew Pro API
+
+这些接口需要已配置KV，并通过 `/{UUID或自定义路径}` 路径访问：
+
+- `GET /api/pro/status`：查看健康分、节点信誉、配置版本状态
+- `GET /api/pro/dashboard`：查看 Network OS 仪表盘数据，包括订阅统计、设备、节点健康和维护状态
+- `GET /api/pro/devices`：查看匿名设备列表和最近访问状态
+- `GET /api/pro/maintenance`：查看最近一次自动维护结果
+- `POST /api/pro/maintenance`：执行自动维护，包含来源同步、节点诊断、信誉更新和优选轮换
+- `POST /api/pro/diagnose`：一键诊断当前 `yx` 节点并更新信誉分
+- `POST /api/pro/rotate`：立即按信誉分轮换并保存 `yx`
+- `GET /api/pro/history`：查看最近20个配置版本
+- `POST /api/pro/rollback`：传入 `{ "id": "版本ID" }` 回滚配置
 
 ### 功能说明
 

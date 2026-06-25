@@ -708,6 +708,9 @@ async function 记录诊断结果(结果列表) {
 async function 获取Pro状态(环境值 = {}) {
   const 信誉 = await 读取节点信誉();
   const 历史 = await 读取键值JSON('pro_config_history', []);
+  const 统计 = await 读取键值JSON('pro_network_telemetry', {});
+  const 设备列表 = await 读取键值JSON('pro_network_devices', {});
+  const 维护 = await 读取键值JSON('pro_network_maintenance', {});
   const 当前列表 = 解析值值数组(获取配置值('yx', ''));
   const 节点列表 = 附加节点评分(当前列表, 信誉).sort((甲, 乙) => 乙.proScore - 甲.proScore);
   const 在线数 = 节点列表.filter(节点 => Number(节点.proStats?.success || 0) > 0 && Number(节点.proStats?.failStreak || 0) === 0).length;
@@ -731,6 +734,15 @@ async function 获取Pro状态(环境值 = {}) {
       online: 在线数,
       lowScore: 低分数
     },
+    networkOS: {
+      totalSubscriptionRequests: Number(统计.totalRequests || 0),
+      todaySubscriptionRequests: 获取今日请求数(统计),
+      activeDevices: Object.keys(设备列表 || {}).length,
+      lastSubscriptionAt: 统计.lastRequestAt || '',
+      lastMaintenanceAt: 维护.lastRunAt || '',
+      topClients: 统计.clients || {},
+      topColos: 统计.colos || {}
+    },
     nodes: 节点列表.slice(0, 50).map(节点 => ({
       ip: 节点.ip,
       port: 节点.port,
@@ -749,6 +761,261 @@ function 生成健康状态页面(状态) {
       'Cache-Control': 'no-store'
     }
   });
+}
+function 增加计数(对象, 键, 数量 = 1) {
+  if (!键) return;
+  对象[键] = Number(对象[键] || 0) + 数量;
+}
+function 限制对象键数量(对象, 限制 = 60) {
+  const 条目 = Object.entries(对象 || {}).sort((甲, 乙) => Number(乙[1] || 0) - Number(甲[1] || 0)).slice(0, 限制);
+  return Object.fromEntries(条目);
+}
+function 限制设备数量(设备列表, 限制 = 80) {
+  const 条目 = Object.entries(设备列表 || {}).sort((甲, 乙) => new Date(乙[1].lastSeen || 0) - new Date(甲[1].lastSeen || 0)).slice(0, 限制);
+  return Object.fromEntries(条目);
+}
+function 哈希文本值(文本) {
+  let 哈希 = 2166136261;
+  const 值 = String(文本 || '');
+  for (let 索引 = 0; 索引 < 值.length; 索引++) {
+    哈希 ^= 值.charCodeAt(索引);
+    哈希 = Math.imul(哈希, 16777619);
+  }
+  return (哈希 >>> 0).toString(36);
+}
+function 识别客户端类型(目标, 用户代理 = '') {
+  const 文本目标 = String(目标 || '').toLowerCase();
+  const 文本代理 = String(用户代理 || '').toLowerCase();
+  const 合并 = `${文本目标} ${文本代理}`;
+  if (合并.includes('clashmeta') || 合并.includes('clash-meta') || 合并.includes('clash')) return 'clash';
+  if (合并.includes('stash')) return 'stash';
+  if (合并.includes('sing-box') || 合并.includes('singbox')) return 'sing-box';
+  if (合并.includes('surge')) return 'surge';
+  if (合并.includes('loon')) return 'loon';
+  if (合并.includes('quantumult') || 合并.includes('quanx')) return 'quantumult-x';
+  if (合并.includes('shadowrocket')) return 'shadowrocket';
+  if (合并.includes('v2rayng')) return 'v2rayng';
+  if (合并.includes('v2ray') || 合并.includes('xray')) return 'v2ray';
+  if (合并.includes('nekoray')) return 'nekoray';
+  return 文本目标 && 文本目标 !== 'base64' ? 文本目标 : 'base64';
+}
+function 构建设备画像(请求, 目标) {
+  const 用户代理 = 请求.headers.get('User-Agent') || '';
+  const 语言 = 请求.headers.get('Accept-Language') || '';
+  const 地址 = 请求.headers.get('CF-Connecting-IP') || 请求.headers.get('X-Forwarded-For') || '';
+  const 客户端 = 识别客户端类型(目标, 用户代理);
+  const 标识 = 哈希文本值(`${地址}|${用户代理}|${语言}|${客户端}`);
+  return {
+    id: 标识,
+    client: 客户端,
+    userAgent: 用户代理.slice(0, 160),
+    language: 语言.slice(0, 80)
+  };
+}
+function 获取日期键(日期 = new Date()) {
+  return 日期.toISOString().slice(0, 10);
+}
+function 获取小时键(日期 = new Date()) {
+  return 日期.toISOString().slice(0, 13) + ':00Z';
+}
+function 获取今日请求数(统计) {
+  const 今天 = 获取日期键();
+  return Number(统计?.byDay?.[今天]?.requests || 0);
+}
+async function 记录订阅遥测(请求, 网址, 目标, 节点数量, 内容类型, 状态码 = 200) {
+  if (!键值存储) return;
+  try {
+    const 现在 = new Date();
+    const 时间 = 现在.toISOString();
+    const 日期键 = 获取日期键(现在);
+    const 小时键 = 获取小时键(现在);
+    const 设备 = 构建设备画像(请求, 目标);
+    const 机房 = 请求.cf?.colo || '';
+    const 国家 = 请求.cf?.country || '';
+    const 统计 = await 读取键值JSON('pro_network_telemetry', {
+      totalRequests: 0,
+      byDay: {},
+      byHour: {},
+      clients: {},
+      targets: {},
+      colos: {},
+      countries: {},
+      recent: []
+    });
+    统计.totalRequests = Number(统计.totalRequests || 0) + 1;
+    统计.lastRequestAt = 时间;
+    统计.byDay[日期键] = 统计.byDay[日期键] || {
+      requests: 0,
+      clients: {},
+      colos: {}
+    };
+    统计.byDay[日期键].requests++;
+    增加计数(统计.byDay[日期键].clients, 设备.client);
+    增加计数(统计.byDay[日期键].colos, 机房 || 'unknown');
+    增加计数(统计.byHour, 小时键);
+    增加计数(统计.clients, 设备.client);
+    增加计数(统计.targets, 目标 || 'base64');
+    增加计数(统计.colos, 机房 || 'unknown');
+    增加计数(统计.countries, 国家 || 'unknown');
+    统计.recent = [{
+      time: 时间,
+      deviceId: 设备.id,
+      client: 设备.client,
+      target: 目标 || 'base64',
+      colo: 机房 || '',
+      country: 国家 || '',
+      path: 网址.pathname,
+      nodes: 节点数量,
+      status: 状态码,
+      contentType
+    }].concat(Array.isArray(统计.recent) ? 统计.recent : []).slice(0, 100);
+    统计.clients = 限制对象键数量(统计.clients, 40);
+    统计.targets = 限制对象键数量(统计.targets, 40);
+    统计.colos = 限制对象键数量(统计.colos, 80);
+    统计.countries = 限制对象键数量(统计.countries, 80);
+    统计.byHour = Object.fromEntries(Object.entries(统计.byHour).sort((甲, 乙) => 乙[0].localeCompare(甲[0])).slice(0, 168));
+    统计.byDay = Object.fromEntries(Object.entries(统计.byDay).sort((甲, 乙) => 乙[0].localeCompare(甲[0])).slice(0, 30));
+    const 设备列表 = await 读取键值JSON('pro_network_devices', {});
+    const 旧设备 = 设备列表[设备.id] || {
+      id: 设备.id,
+      firstSeen: 时间,
+      requests: 0,
+      clients: {},
+      targets: {},
+      colos: {}
+    };
+    旧设备.lastSeen = 时间;
+    旧设备.requests = Number(旧设备.requests || 0) + 1;
+    旧设备.client = 设备.client;
+    旧设备.userAgent = 设备.userAgent;
+    旧设备.language = 设备.language;
+    旧设备.country = 国家 || 旧设备.country || '';
+    旧设备.colo = 机房 || 旧设备.colo || '';
+    增加计数(旧设备.clients, 设备.client);
+    增加计数(旧设备.targets, 目标 || 'base64');
+    增加计数(旧设备.colos, 机房 || 'unknown');
+    设备列表[设备.id] = 旧设备;
+    await Promise.all([写入键值JSON('pro_network_telemetry', 统计), 写入键值JSON('pro_network_devices', 限制设备数量(设备列表, 80))]);
+  } catch (错误) {}
+}
+async function 获取NetworkOS数据(环境值 = {}) {
+  const [状态, 统计, 设备列表, 维护] = await Promise.all([获取Pro状态(环境值), 读取键值JSON('pro_network_telemetry', {}), 读取键值JSON('pro_network_devices', {}), 读取键值JSON('pro_network_maintenance', {})]);
+  const 设备数组 = Object.values(设备列表 || {}).sort((甲, 乙) => new Date(乙.lastSeen || 0) - new Date(甲.lastSeen || 0));
+  return {
+    ok: true,
+    product: 'cfnew Pro Network OS',
+    timestamp: new Date().toISOString(),
+    overview: {
+      healthScore: 状态.health.score,
+      nodes: 状态.health.nodes,
+      onlineNodes: 状态.health.online,
+      lowScoreNodes: 状态.health.lowScore,
+      totalSubscriptionRequests: Number(统计.totalRequests || 0),
+      todaySubscriptionRequests: 获取今日请求数(统计),
+      activeDevices: 设备数组.length,
+      lastSubscriptionAt: 统计.lastRequestAt || '',
+      lastMaintenanceAt: 维护.lastRunAt || ''
+    },
+    traffic: {
+      byDay: 统计.byDay || {},
+      byHour: 统计.byHour || {},
+      clients: 统计.clients || {},
+      targets: 统计.targets || {},
+      colos: 统计.colos || {},
+      countries: 统计.countries || {},
+      recent: 统计.recent || []
+    },
+    devices: 设备数组.slice(0, 30),
+    maintenance: 维护,
+    nodeHealth: 状态.nodes
+  };
+}
+async function 运行NetworkOS维护(环境值 = {}) {
+  const 开始时间 = new Date().toISOString();
+  const 动作列表 = [];
+  const 当前配置 = 获取有效配置快照(环境值);
+  let 当前节点 = 解析值值数组(获取配置值('yx', ''));
+  if (当前节点.length === 0 && 当前配置.yxURL) {
+    try {
+      const 来源节点 = await 获取值解析新地址列表();
+      if (来源节点.length > 0) {
+        await 保存配置版本历史('network-os-source-sync');
+        键值配置.yx = 处理数组值值(来源节点.slice(0, 30).map(节点 => ({
+          ip: 节点.ip,
+          port: 节点.port,
+          name: 节点.name || 节点.ip
+        })));
+        await 保存键值配置();
+        更新自定义优选来源值();
+        当前节点 = 解析值值数组(获取配置值('yx', ''));
+        动作列表.push({
+          action: 'sync-source',
+          status: 'ok',
+          nodes: 当前节点.length
+        });
+      }
+    } catch (错误) {
+      动作列表.push({
+        action: 'sync-source',
+        status: 'failed',
+        message: 错误.message
+      });
+    }
+  }
+  const 诊断目标列表 = 当前节点.slice(0, 20).map(节点 => 解析诊断目标(节点, 443)).filter(节点 => 节点.ip);
+  const 诊断结果 = [];
+  for (const 节点 of 诊断目标列表) {
+    诊断结果.push(await 诊断单个节点(节点, 6000));
+  }
+  let 信誉 = await 记录诊断结果(诊断结果);
+  动作列表.push({
+    action: 'diagnose',
+    status: 'ok',
+    total: 诊断结果.length,
+    ok: 诊断结果.filter(结果 => 结果.success).length,
+    failed: 诊断结果.filter(结果 => !结果.success).length
+  });
+  if (当前节点.length > 1) {
+    const 轮换结果 = await 智能轮换节点列表(当前节点);
+    const 轮换值 = 处理数组值值(轮换结果.map(节点 => ({
+      ip: 节点.ip,
+      port: 节点.port,
+      name: 节点.name || 节点.isp || 节点.ip
+    })));
+    if (轮换值 && 轮换值 !== 获取配置值('yx', '')) {
+      await 保存配置版本历史('network-os-rotate');
+      键值配置.yx = 轮换值;
+      await 保存键值配置();
+      更新自定义优选来源值();
+      动作列表.push({
+        action: 'rotate',
+        status: 'ok',
+        nodes: 轮换结果.length
+      });
+    } else {
+      动作列表.push({
+        action: 'rotate',
+        status: 'skipped',
+        message: '当前节点顺序无需调整'
+      });
+    }
+  }
+  const 附分节点 = 附加节点评分(解析值值数组(获取配置值('yx', '')), 信誉);
+  const 低分节点 = 附分节点.filter(节点 => 节点.proScore < (parseInt(获取配置值('proMinScore', 配置默认值.proMinScore), 10) || 35));
+  const 维护 = {
+    lastRunAt: new Date().toISOString(),
+    startedAt: 开始时间,
+    status: 'ok',
+    actions: 动作列表,
+    summary: {
+      nodes: 附分节点.length,
+      lowScore: 低分节点.length,
+      ok: 诊断结果.filter(结果 => 结果.success).length,
+      failed: 诊断结果.filter(结果 => !结果.success).length
+    }
+  };
+  await 写入键值JSON('pro_network_maintenance', 维护);
+  return 维护;
 }
 async function 检测工作器地区(请求762) {
   try {
@@ -1917,7 +2184,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return await 处理订阅值(请求735, 认证令牌);
           }
           if (规范化路径 === 规范化自定义路径 + '/sub') {
-            return await 处理订阅请求(请求735, 认证令牌, 网址698);
+            return await 处理订阅请求(请求735, 认证令牌, 网址698, 本地值733);
           }
           if (网址698.pathname.length > 1 && 网址698.pathname !== '/') {
             const 用户658 = 网址698.pathname.replace(/\/$/, '').replace('/sub', '').substring(1);
@@ -1957,7 +2224,7 @@ document.addEventListener('DOMContentLoaded', function () {
               const 用户656 = 路径部分列表[0].substring(1);
               if (是否有效格式(用户656)) {
                 if (用户656 === 认证令牌) {
-                  return await 处理订阅请求(请求735, 用户656, 网址698);
+                  return await 处理订阅请求(请求735, 用户656, 网址698, 本地值733);
                 } else {
                   return new Response(JSON.stringify({
                     error: 'UUID错误'
@@ -1973,7 +2240,7 @@ document.addEventListener('DOMContentLoaded', function () {
           }
         }
         if (网址698.pathname.toLowerCase().includes(`/${值路径}`)) {
-          return await 处理订阅请求(请求735, 认证令牌);
+          return await 处理订阅请求(请求735, 认证令牌, 网址698, 本地值733);
         }
       }
       return new Response(JSON.stringify({
@@ -2950,7 +3217,7 @@ async function 获取加密客户端问候配置(域名522) {
     return null;
   }
 }
-async function 处理订阅请求(请求507, 用户506, 网址505 = null) {
+async function 处理订阅请求(请求507, 用户506, 网址505 = null, 执行上下文 = null) {
   if (!网址505) 网址505 = new URL(请求507.url);
   const 最终链接列表 = [];
   const 工作器域名504 = 网址505.hostname;
@@ -3148,9 +3415,18 @@ async function 处理订阅请求(请求507, 用户506, 网址505 = null) {
       响应头部列表['X-ECH-Config-Length'] = String(加密客户端问候配置501.length);
     }
   }
-  return new Response(订阅内容, {
+  const 响应 = new Response(订阅内容, {
     headers: 响应头部列表
   });
+  const 遥测任务 = 记录订阅遥测(请求507, 网址505, 目标503, 最终链接列表.length, 内容类型483, 200);
+  if (执行上下文 && typeof 执行上下文.waitUntil === 'function') {
+    执行上下文.waitUntil(遥测任务);
+  } else {
+    try {
+      await 遥测任务;
+    } catch (忽略) {}
+  }
+  return 响应;
 }
 function 生成链接列表来源源(列表482, 用户481, 工作器域名480, 加密客户端问候配置479 = null, 跳过编号478 = false, 别名命名器477 = null) {
   const 云墙超文本端口476 = [80, 8080, 8880, 2052, 2082, 2086, 2095];
@@ -5780,6 +6056,8 @@ async function 处理订阅值(请求241, 用户240 = null) {
                             <button type="button" id="proRunDiagnostics" style="background: rgba(0, 240, 255, 0.2); border: 1px solid #00f0ff; padding: 8px 12px; color: #00f0ff; font-family: 'Courier New', monospace; cursor: pointer;">一键网络诊断</button>
                             <button type="button" id="proRotateNodes" style="background: rgba(0, 220, 130, 0.25); border: 1px solid #00ff9d; padding: 8px 12px; color: #00ff9d; font-family: 'Courier New', monospace; cursor: pointer;">立即轮换优选</button>
                             <button type="button" id="proLoadHealth" style="background: rgba(255, 180, 0, 0.18); border: 1px solid #ffb400; padding: 8px 12px; color: #ffb400; font-family: 'Courier New', monospace; cursor: pointer;">刷新健康状态</button>
+                            <button type="button" id="proLoadDashboard" style="background: rgba(163, 71, 255, 0.18); border: 1px solid #a347ff; padding: 8px 12px; color: #c99cff; font-family: 'Courier New', monospace; cursor: pointer;">Network OS</button>
+                            <button type="button" id="proRunMaintenance" style="background: rgba(255, 43, 214, 0.16); border: 1px solid #ff2bd6; padding: 8px 12px; color: #ff9bed; font-family: 'Courier New', monospace; cursor: pointer;">自动维护</button>
                             <a id="proHealthLink" href="${网址698.pathname.replace(/\/$/, '')}/status" target="_blank" style="border: 1px solid #7aa9c4; padding: 8px 12px; color: #7aa9c4; text-decoration: none;">状态页</a>
                         </div>
                         <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;">
@@ -7123,6 +7401,36 @@ document.addEventListener('DOMContentLoaded', function () {
       await 加载Pro历史();
     } catch (错误) {
       显示Pro结果('状态加载失败: ' + 错误.message);
+    }
+  });
+  const Pro仪表盘按钮 = document.getElementById('proLoadDashboard');
+  if (Pro仪表盘按钮) Pro仪表盘按钮.addEventListener('click', async function () {
+    Pro仪表盘按钮.disabled = true;
+    显示Pro结果('加载 Network OS Dashboard...');
+    try {
+      显示Pro结果(await 调用Pro接口('dashboard'));
+    } catch (错误) {
+      显示Pro结果('Dashboard 加载失败: ' + 错误.message);
+    } finally {
+      Pro仪表盘按钮.disabled = false;
+    }
+  });
+  const Pro维护按钮 = document.getElementById('proRunMaintenance');
+  if (Pro维护按钮) Pro维护按钮.addEventListener('click', async function () {
+    if (!confirm('自动维护会诊断当前节点并按信誉分修复/轮换优选列表，是否继续？')) return;
+    Pro维护按钮.disabled = true;
+    显示Pro结果('Network OS 自动维护中...');
+    try {
+      const 数据 = await 调用Pro接口('maintenance', {
+        method: 'POST'
+      });
+      显示Pro结果(数据);
+      await 加载当前配置();
+      await 加载Pro历史();
+    } catch (错误) {
+      显示Pro结果('自动维护失败: ' + 错误.message);
+    } finally {
+      Pro维护按钮.disabled = false;
     }
   });
   const Pro回滚按钮 = document.getElementById('proRollback');
@@ -8793,6 +9101,62 @@ async function 处理Pro接口(请求, 环境值 = {}, 动作列表 = []) {
         }
       });
     }
+    if (动作 === 'dashboard') {
+      const 仪表盘 = await 获取NetworkOS数据(环境值);
+      return new Response(JSON.stringify(仪表盘), {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    if (动作 === 'devices') {
+      const 设备列表 = await 读取键值JSON('pro_network_devices', {});
+      const 数据 = Object.values(设备列表 || {}).sort((甲, 乙) => new Date(乙.lastSeen || 0) - new Date(甲.lastSeen || 0));
+      return new Response(JSON.stringify({
+        success: true,
+        count: 数据.length,
+        data: 数据
+      }), {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    if (动作 === 'maintenance') {
+      if (请求.method === 'GET') {
+        const 维护 = await 读取键值JSON('pro_network_maintenance', {});
+        return new Response(JSON.stringify({
+          success: true,
+          data: 维护
+        }), {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+      if (请求.method !== 'POST') {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Method not allowed'
+        }), {
+          status: 405,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+      const 维护 = await 运行NetworkOS维护(环境值);
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Network OS 自动维护完成',
+        data: 维护,
+        dashboard: await 获取NetworkOS数据(环境值)
+      }), {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
     if (动作 === 'history') {
       const 历史 = await 读取键值JSON('pro_config_history', []);
       return new Response(JSON.stringify({
@@ -8949,7 +9313,7 @@ async function 处理Pro接口(请求, 环境值 = {}, 动作列表 = []) {
     return new Response(JSON.stringify({
       success: false,
       error: '未知Pro动作',
-      supported: ['status', 'history', 'rollback', 'diagnose', 'rotate']
+      supported: ['status', 'dashboard', 'devices', 'maintenance', 'history', 'rollback', 'diagnose', 'rotate']
     }), {
       status: 404,
       headers: {
