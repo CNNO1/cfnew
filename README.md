@@ -32,6 +32,18 @@
 - 自动识别：根据User-Agent自动返回对应格式
 - 多语言：支持中文和波斯语，根据浏览器语言自动切换
 
+## cfnew Pro Phase 1
+
+定位：最好用、最省心、最智能的 Cloudflare 代理管理平台。用户部署一次，以后尽量不用再管。
+
+- 节点信誉评分：KV长期记录成功率、平均延迟、连续失败次数，并生成0-100信誉分
+- 自动优选IP轮换：订阅生成时按信誉分排序，并按15分钟窗口自动轮换候选节点
+- 一键网络诊断：管理页内置诊断按钮，结果会回写节点信誉数据
+- 配置版本回滚：每次保存、轮换、回滚前自动保留最近20个配置版本
+- 健康状态页面：访问 `/{UUID或自定义路径}/status` 查看整体健康分、节点状态和轮换设置
+
+当前 Pro 增强实现位于 `明文源吗`。如果需要发布混淆版，请基于该文件重新生成 `少年你相信光吗`。
+
 ## v2.9.8c 更新
 
 - 订阅转换内部实现：Clash / Stash / Sing-box / Surge / Loon / Quantumult X 配置全部由 Worker 直接生成，不再依赖任何外部 sub-converter
@@ -162,6 +174,9 @@
 | `yxby` | yes | 可选，设为`yes`关闭所有优选功能 |
 | `rm` | no | 可选，设为`no`关闭地区智能匹配 |
 | `ae` | yes | 可选，设为`yes`允许API管理（默认关闭） |
+| `proAutoRotate` | yes/no | 可选，启用cfnew Pro自动优选轮换（默认启用） |
+| `proRotateSize` | 数字 | 可选，每轮保留的优选节点数（默认10） |
+| `proMinScore` | 0-100 | 可选，自动轮换最低信誉分（默认35） |
 
 #### KV存储设置（推荐）
 
@@ -185,6 +200,16 @@ curl -X POST "https://your-worker.workers.dev/{自定义路径}/api/preferred-ip
   -H "Content-Type: application/json" \
   -d '{"ip": "1.2.3.4", "port": 443, "name": "香港节点"}'
 ```
+
+#### cfnew Pro API
+
+这些接口需要已配置KV，并通过 `/{UUID或自定义路径}` 路径访问：
+
+- `GET /api/pro/status`：查看健康分、节点信誉、配置版本状态
+- `POST /api/pro/diagnose`：一键诊断当前 `yx` 节点并更新信誉分
+- `POST /api/pro/rotate`：立即按信誉分轮换并保存 `yx`
+- `GET /api/pro/history`：查看最近20个配置版本
+- `POST /api/pro/rollback`：传入 `{ "id": "版本ID" }` 回滚配置
 4. 批量添加IP：
 ```bash
 curl -X POST "https://your-worker.workers.dev/{UUID或自定义路径}/api/preferred-ips" \
